@@ -17,6 +17,7 @@ function ProductDetails() {
   const { addToCart } = useCart();
   const navigate = useNavigate();
   const [notification, setNotification] = useState("");
+  const [mainImage, setMainImage] = useState(""); // Novo estado para a imagem principal exibida
 
   useEffect(() => {
     const fetchProductDetails = async () => {
@@ -29,6 +30,12 @@ function ProductDetails() {
         if (docSnap.exists()) {
           const data = { id: docSnap.id, ...docSnap.data() };
           setProduto(data);
+          // Define a imagem principal inicial (pode ser a 'imagem' principal ou a primeira da 'galeriaImagens')
+          setMainImage(
+            data.imagem ||
+              (data.galeriaImagens && data.galeriaImagens[0]) ||
+              "https://via.placeholder.com/600"
+          );
         } else {
           setError("Produto não encontrado!");
         }
@@ -54,22 +61,16 @@ function ProductDetails() {
         `${produto.nome} (x${quantidade}) adicionado ao carrinho!`
       );
 
-      // Redirecionamento para o carrinho APÓS a notificação ser definida
-      // Se quiser que o usuário veja a notificação por um instante antes de redirecionar,
-      // você pode envolver o navigate em um setTimeout.
-      // Ex: setTimeout(() => navigate("/carrinho"), 1500); // Espera 1.5s
-      // Para redirecionamento imediato:
       navigate("/carrinho");
 
-      // Limpa a notificação após 3 segundos (útil se não houver redirecionamento imediato)
-      // Se o redirecionamento for imediato, a notificação pode não ser vista nesta página.
-      // Considere mostrar a notificação na página do carrinho ou usar um método de notificação global.
       setTimeout(() => setNotification(""), 3000);
     }
   };
 
-  // ... (o restante do seu componente JSX permanece o mesmo) ...
-  // O JSX de loading, error, e a estrutura principal do produto não precisam mudar para esta funcionalidade.
+  // Nova função para trocar a imagem principal exibida ao clicar em uma miniatura
+  const handleThumbnailClick = (imageUrl) => {
+    setMainImage(imageUrl);
+  };
 
   if (loading) {
     return (
@@ -110,6 +111,12 @@ function ProductDetails() {
     mostrarPrecoAntigo = true;
   }
 
+  // Combina a imagem principal com as imagens da galeria, evitando duplicatas
+  const allImages = [produto.imagem, ...(produto.galeriaImagens || [])].filter(
+    Boolean
+  );
+  const uniqueImages = [...new Set(allImages)]; // Remove duplicatas
+
   return (
     <>
       <motion.div
@@ -121,16 +128,38 @@ function ProductDetails() {
         <div className="grid md:grid-cols-2 gap-8 lg:gap-12 items-start">
           {/* Coluna da Imagem */}
           <motion.div
-            className="aspect-square bg-stone-100 rounded-xl shadow-lg overflow-hidden"
+            className="flex flex-col items-center"
             initial={{ opacity: 0, x: -50 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.5, delay: 0.1 }}
           >
-            <img
-              src={produto.imagem || produto.imageUrl} // Adapte para o nome do campo da imagem
-              alt={produto.nome}
-              className="w-full h-full object-cover"
-            />
+            <div className="aspect-square w-full max-w-md bg-stone-100 rounded-xl shadow-lg overflow-hidden mb-4">
+              <img
+                src={mainImage} // Usa o estado mainImage para a imagem principal
+                alt={produto.nome}
+                className="w-full h-full object-cover"
+              />
+            </div>
+            {/* Thumbnails da galeria */}
+            {uniqueImages.length > 1 && ( // Exibe miniaturas apenas se houver mais de uma imagem
+              <div className="flex space-x-2 justify-center w-full max-w-md overflow-x-auto p-2">
+                {uniqueImages.map((imgUrl, index) => (
+                  <img
+                    key={index}
+                    src={imgUrl}
+                    alt={`${produto.nome} - Vista ${index + 1}`}
+                    className={`w-20 h-20 object-cover rounded-md cursor-pointer border-2
+                    ${
+                      mainImage === imgUrl
+                        ? "border-emerald-500 shadow-md"
+                        : "border-transparent hover:border-gray-300"
+                    }
+                    transition-all duration-200`}
+                    onClick={() => handleThumbnailClick(imgUrl)} // Ao clicar, define como imagem principal
+                  />
+                ))}
+              </div>
+            )}
           </motion.div>
 
           {/* Coluna de Detalhes */}

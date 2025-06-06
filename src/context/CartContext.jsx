@@ -30,13 +30,14 @@ export const CartProvider = ({ children }) => {
             : item
         );
       }
-      // AO ADICIONAR, INICIALIZA A OBSERVAÇÃO DO ITEM (VAZIA OU COM VALOR PADRÃO SE HOUVER)
+      // AO ADICIONAR, INICIALIZA A OBSERVAÇÃO DO ITEM E ADICIONA AS IMAGENS DA GALERIA
       return [
         ...prevItems,
         {
           ...productToAdd,
           quantity: productToAdd.quantity || 1,
-          itemObservation: "", // Novo campo para observação específica do item
+          itemObservation: "", // Campo para observação específica do item
+          galeriaImagens: productToAdd.galeriaImagens || [], // <--- ADIÇÃO AQUI: Passa as imagens da galeria para o carrinho
         },
       ];
     });

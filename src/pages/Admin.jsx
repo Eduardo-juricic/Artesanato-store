@@ -17,20 +17,21 @@ import { ChevronDownIcon, ChevronUpIcon } from "@heroicons/react/24/outline";
 const Admin = () => {
   const [produtos, setProdutos] = useState([]);
   const [pedidos, setPedidos] = useState([]);
-  // ESTADO DO FORMULÁRIO: COMBINAÇÃO DOS DOIS CÓDIGOS
   const [form, setForm] = useState({
     nome: "",
     descricao: "",
     preco: "",
-    imagem: null,
-    currentImageUrl: "",
+    imagem: null, // File object for main image upload
+    currentImageUrl: "", // URL of the currently saved main image
+    galeriaImagens: [], // Array of URLs for gallery images (already saved images)
+    newGalleryFiles: [], // <--- MUDANÇA AQUI: Array para armazenar File objects de novas imagens da galeria
     destaque_curto: "",
     preco_promocional: "",
-    peso: "", // kg (Novo)
-    altura: "", // cm (Novo)
-    largura: "", // cm (Novo)
-    comprimento: "", // cm (Novo)
-    observacaoObrigatoria: false, // (Novo)
+    peso: "",
+    altura: "",
+    largura: "",
+    comprimento: "",
+    observacaoObrigatoria: false,
   });
   const [editandoId, setEditandoId] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -38,7 +39,7 @@ const Admin = () => {
     cloud_name: "",
     upload_preset: "",
   });
-  const [showOrders, setShowOrders] = useState(false); // Estado para controlar a visibilidade dos pedidos
+  const [showOrders, setShowOrders] = useState(false);
 
   const navigate = useNavigate();
   const produtosRef = collection(db, "produtos");
@@ -103,8 +104,39 @@ const Admin = () => {
       });
   }, []);
 
-  const handleFileChange = (e) => {
+  const handleMainImageChange = (e) => {
     setForm({ ...form, imagem: e.target.files[0] });
+  };
+
+  // MUDANÇA PRINCIPAL AQUI: Agora concatena os novos arquivos ao array existingente 'newGalleryFiles'
+  const handleGalleryFileChange = (e) => {
+    const selectedFiles = Array.from(e.target.files);
+    setForm((prevForm) => ({
+      ...prevForm,
+      newGalleryFiles: [...prevForm.newGalleryFiles, ...selectedFiles],
+    }));
+    // Limpa o valor do input para permitir que o usuário selecione os mesmos arquivos novamente se desejar
+    e.target.value = null;
+  };
+
+  // Função para remover uma imagem da galeria (já salva no Firestore)
+  const handleRemoveGalleryImage = (indexToRemove) => {
+    setForm((prevForm) => ({
+      ...prevForm,
+      galeriaImagens: prevForm.galeriaImagens.filter(
+        (_, index) => index !== indexToRemove
+      ),
+    }));
+  };
+
+  // NOVA FUNÇÃO: Remover uma imagem que foi recém-selecionada (antes do upload)
+  const handleRemoveNewGalleryFile = (indexToRemove) => {
+    setForm((prevForm) => ({
+      ...prevForm,
+      newGalleryFiles: prevForm.newGalleryFiles.filter(
+        (_, index) => index !== indexToRemove
+      ),
+    }));
   };
 
   const handleSubmit = async (e) => {
@@ -112,8 +144,10 @@ const Admin = () => {
     setUploading(true);
 
     try {
-      let imageUrl = form.currentImageUrl;
+      let imageUrl = form.currentImageUrl; // URL da imagem principal existente
+      let finalGalleryImageUrls = [...(form.galeriaImagens || [])]; // Copia as URLs de imagens da galeria existentes
 
+      // Upload da imagem principal (se houver uma nova)
       if (form.imagem) {
         const formData = new FormData();
         formData.append("file", form.imagem);
@@ -136,7 +170,7 @@ const Admin = () => {
         if (!response.ok) {
           const errorData = await response.json();
           throw new Error(
-            `Erro do Cloudinary: ${
+            `Erro do Cloudinary (imagem principal): ${
               errorData.error?.message || response.statusText
             }`
           );
@@ -146,21 +180,61 @@ const Admin = () => {
         imageUrl = data.secure_url;
       }
 
-      // DADOS DO PRODUTO A SEREM SALVOS/ATUALIZADOS (COMBINAÇÃO)
+      // Upload das novas imagens da galeria (acumuladas em newGalleryFiles)
+      if (form.newGalleryFiles && form.newGalleryFiles.length > 0) {
+        const uploadPromises = Array.from(form.newGalleryFiles).map((file) => {
+          const formData = new FormData();
+          formData.append("file", file);
+          formData.append(
+            "upload_preset",
+            cloudinaryConfig.upload_preset || "produtos_upload"
+          );
+          formData.append("folder", "produtos_galeria"); // Pasta diferente para galeria, opcional
+
+          return fetch(
+            `https://api.cloudinary.com/v1_1/${
+              cloudinaryConfig.cloud_name || "dtbvkmxy9"
+            }/image/upload`,
+            {
+              method: "POST",
+              body: formData,
+            }
+          )
+            .then((response) => {
+              if (!response.ok) {
+                return response.json().then((errorData) => {
+                  throw new Error(
+                    `Erro do Cloudinary (galeria): ${
+                      errorData.error?.message || response.statusText
+                    }`
+                  );
+                });
+              }
+              return response.json();
+            })
+            .then((data) => data.secure_url);
+        });
+
+        const uploadedUrls = await Promise.all(uploadPromises);
+        finalGalleryImageUrls = [...finalGalleryImageUrls, ...uploadedUrls]; // Adiciona as novas URLs à lista final
+      }
+
+      // DADOS DO PRODUTO A SEREM SALVOS/ATUALIZADOS
       const produtoData = {
         nome: form.nome,
         descricao: form.descricao,
         preco: Number(form.preco),
-        imagem: imageUrl,
+        imagem: imageUrl, // URL da imagem principal
+        galeriaImagens: finalGalleryImageUrls, // Array final de URLs da galeria
         destaque_curto: form.destaque_curto,
         preco_promocional: form.preco_promocional
           ? Number(form.preco_promocional)
           : 0,
-        peso: Number(form.peso), // Adicionado peso
-        altura: Number(form.altura), // Adicionado altura
-        largura: Number(form.largura), // Adicionado largura
-        comprimento: Number(form.comprimento), // Adicionado comprimento
-        observacaoObrigatoria: form.observacaoObrigatoria || false, // Adicionado
+        peso: Number(form.peso),
+        altura: Number(form.altura),
+        largura: Number(form.largura),
+        comprimento: Number(form.comprimento),
+        observacaoObrigatoria: form.observacaoObrigatoria || false,
       };
 
       if (editandoId) {
@@ -171,25 +245,33 @@ const Admin = () => {
         await addDoc(produtosRef, produtoData);
       }
 
-      // RESET DO FORMULÁRIO APÓS SUBMISSÃO (COMBINAÇÃO)
+      // RESET DO FORMULÁRIO APÓS SUBMISSÃO
       setForm({
         nome: "",
         descricao: "",
         preco: "",
         imagem: null,
         currentImageUrl: "",
+        galeriaImagens: [], // Limpa o array de imagens da galeria salvas
+        newGalleryFiles: [], // <--- MUDANÇA AQUI: Limpa o array de File objects
         destaque_curto: "",
         preco_promocional: "",
-        peso: "", // Limpa o peso
-        altura: "", // Limpa a altura
-        largura: "", // Limpa a largura
-        comprimento: "", // Limpa o comprimento
-        observacaoObrigatoria: false, // Limpa o checkbox
+        peso: "",
+        altura: "",
+        largura: "",
+        comprimento: "",
+        observacaoObrigatoria: false,
       });
 
-      if (document.querySelector('input[type="file"]')) {
-        document.querySelector('input[type="file"]').value = "";
+      // Limpa o input de arquivo principal visualmente
+      if (document.getElementById("mainImageUpload")) {
+        document.getElementById("mainImageUpload").value = "";
       }
+      // O input de galeria já é limpo em handleGalleryFileChange
+      // if (document.getElementById("galleryImageUpload")) {
+      //   document.getElementById("galleryImageUpload").value = "";
+      // }
+
       buscarProdutos();
     } catch (error) {
       console.error("Erro ao enviar produto:", error);
@@ -230,14 +312,16 @@ const Admin = () => {
       descricao: produto.descricao,
       preco: produto.preco,
       imagem: null, // Resetar a imagem para upload de uma nova
-      currentImageUrl: produto.imagem || "", // Manter URL da imagem atual
+      currentImageUrl: produto.imagem || "", // Manter URL da imagem principal atual
+      galeriaImagens: produto.galeriaImagens || [], // Carrega as imagens da galeria existentes
+      newGalleryFiles: [], // <--- MUDANÇA AQUI: Reseta o array de File objects
       destaque_curto: produto.destaque_curto || "",
       preco_promocional: produto.preco_promocional || "",
-      peso: produto.peso || "", // Carrega peso
-      altura: produto.altura || "", // Carrega altura
-      largura: produto.largura || "", // Carrega largura
-      comprimento: produto.comprimento || "", // Carrega comprimento
-      observacaoObrigatoria: produto.observacaoObrigatoria || false, // Carrega checkbox
+      peso: produto.peso || "",
+      altura: produto.altura || "",
+      largura: produto.largura || "",
+      comprimento: produto.comprimento || "",
+      observacaoObrigatoria: produto.observacaoObrigatoria || false,
       id: produto.id, // ID do produto que está sendo editado
     });
     setEditandoId(produto.id);
@@ -277,7 +361,6 @@ const Admin = () => {
           Sair
         </button>
       </div>
-      {/* Seção de Adicionar/Editar Produto (DO SEU CÓDIGO MAIS RECENTE - AJUSTADO) */}
       <form
         onSubmit={handleSubmit}
         className="space-y-4 mb-10 p-6 border rounded-lg shadow-lg bg-white"
@@ -326,7 +409,6 @@ const Admin = () => {
           className="border p-2 w-full rounded h-20 resize-y"
         />
 
-        {/* INPUTS PARA PESO E DIMENSÕES (DO SEU CÓDIGO MAIS RECENTE) */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-2">
           <div>
             <label
@@ -404,7 +486,6 @@ const Admin = () => {
           </div>
         </div>
 
-        {/* CHECKBOX "Observação obrigatória" (DO SEU CÓDIGO ANTIGO) */}
         <div className="flex items-center my-4">
           <input
             type="checkbox"
@@ -425,26 +506,99 @@ const Admin = () => {
           </label>
         </div>
 
+        {/* Campo para Imagem Principal */}
         <label className="block text-sm font-medium text-gray-700 mt-2">
-          Imagem do Produto:
+          Imagem Principal do Produto:
         </label>
         <input
           type="file"
+          id="mainImageUpload"
           accept="image/*"
-          onChange={handleFileChange}
+          onChange={handleMainImageChange}
           className="border p-2 w-full rounded file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
         />
-
         {form.currentImageUrl && (
           <div className="mt-2">
-            <p className="text-sm text-gray-600 mb-1">Imagem atual:</p>
+            <p className="text-sm text-gray-600 mb-1">
+              Imagem principal atual:
+            </p>
             <img
               src={form.currentImageUrl}
-              alt="Imagem atual do produto"
+              alt="Imagem principal do produto"
               className="h-20 w-20 object-cover rounded-md border border-gray-300"
             />
           </div>
         )}
+
+        {/* Campo para Imagens da Galeria */}
+        <label className="block text-sm font-medium text-gray-700 mt-4">
+          Adicionar Imagens à Galeria (opcional, selecione múltiplas):
+        </label>
+        <input
+          type="file"
+          id="galleryImageUpload"
+          accept="image/*"
+          multiple
+          onChange={handleGalleryFileChange}
+          className="border p-2 w-full rounded file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+        />
+
+        {/* Pré-visualização de NOVAS imagens a serem enviadas */}
+        {form.newGalleryFiles.length > 0 && ( // Verifica se há arquivos novos para exibir
+          <div className="mt-2">
+            <p className="text-sm text-gray-600 mb-1">
+              Novas imagens para a galeria (aguardando upload):
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {form.newGalleryFiles.map((file, index) => (
+                <div key={index} className="relative">
+                  <img
+                    src={URL.createObjectURL(file)} // Cria URL temporário para pré-visualização
+                    alt={`Nova imagem ${index}`}
+                    className="h-20 w-20 object-cover rounded-md border border-gray-300"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveNewGalleryFile(index)}
+                    className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 text-xs hover:bg-red-700 flex items-center justify-center w-5 h-5"
+                    title="Remover esta nova imagem"
+                  >
+                    X
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Pré-visualização de imagens da galeria JÁ SALVAS no Firestore */}
+        {form.galeriaImagens.length > 0 && (
+          <div className="mt-2">
+            <p className="text-sm text-gray-600 mb-1">
+              Imagens da Galeria já salvas no produto:
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {form.galeriaImagens.map((imgUrl, index) => (
+                <div key={index} className="relative">
+                  <img
+                    src={imgUrl}
+                    alt={`Galeria ${index}`}
+                    className="h-20 w-20 object-cover rounded-md border border-gray-300"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveGalleryImage(index)}
+                    className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 text-xs hover:bg-red-700 flex items-center justify-center w-5 h-5"
+                    title="Remover imagem salva"
+                  >
+                    X
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <button
           type="submit"
           className="bg-blue-600 text-white w-full py-3 rounded-lg hover:bg-blue-700 transition-colors duration-200 text-lg font-medium"
@@ -468,6 +622,8 @@ const Admin = () => {
                 preco: "",
                 imagem: null,
                 currentImageUrl: "",
+                galeriaImagens: [], // Limpa o array
+                newGalleryFiles: [], // <--- MUDANÇA AQUI: Limpa o array de File objects
                 destaque_curto: "",
                 preco_promocional: "",
                 peso: "",
@@ -476,8 +632,11 @@ const Admin = () => {
                 comprimento: "",
                 observacaoObrigatoria: false,
               });
-              if (document.querySelector('input[type="file"]')) {
-                document.querySelector('input[type="file"]').value = "";
+              if (document.getElementById("mainImageUpload")) {
+                document.getElementById("mainImageUpload").value = "";
+              }
+              if (document.getElementById("galleryImageUpload")) {
+                document.getElementById("galleryImageUpload").value = "";
               }
             }}
             className="bg-gray-400 text-white w-full py-3 rounded-lg mt-2 hover:bg-gray-500 transition-colors duration-200 text-lg font-medium"
@@ -486,7 +645,7 @@ const Admin = () => {
           </button>
         )}
       </form>
-      {/* Seção de Pedidos Recebidos (DO SEU CÓDIGO ANTIGO - COM O NOVO BLOCO DE FRETE) */}
+
       <div className="mt-10">
         <div
           className="flex justify-between items-center mb-6 cursor-pointer"
@@ -581,7 +740,6 @@ const Admin = () => {
                     )}
                   </div>
 
-                  {/* Detalhes do Frete (NOVO BLOCO - DO SEU CÓDIGO MAIS RECENTE) */}
                   {pedido.shippingDetails && (
                     <div className="mb-4 p-4 bg-purple-50 rounded-md border border-purple-200">
                       <h4 className="font-semibold text-md text-purple-800 mb-2">
@@ -661,7 +819,7 @@ const Admin = () => {
                           {parseFloat(item.precoUnitario || 0)
                             .toFixed(2)
                             .replace(".", ",")}
-                          {item.observacaoProduto && ( // Usar observacaoProduto, como salvo no Firestore
+                          {item.observacaoProduto && (
                             <p className="text-xs text-blue-600 pl-4">
                               ↳ Obs: {item.observacaoProduto}
                             </p>
@@ -685,8 +843,7 @@ const Admin = () => {
           </>
         )}
       </div>
-      <div className="mb-10"></div> {/* Espaçamento */}
-      {/* Seção de Produtos Cadastrados (DO SEU CÓDIGO ANTIGO - COM EXIBIÇÃO DOS NOVOS CAMPOS) */}
+      <div className="mb-10"></div>
       <div className="mt-10">
         <h2 className="text-2xl font-semibold mb-4 text-gray-700">
           Produtos Cadastrados
@@ -717,7 +874,6 @@ const Admin = () => {
                       {produto.destaque_curto}
                     </p>
                   )}
-                  {/* Exibir se a observação é obrigatória */}
                   <p
                     className={`text-xs mb-1 ${
                       produto.observacaoObrigatoria
@@ -731,7 +887,6 @@ const Admin = () => {
                   <p className="text-gray-700 text-sm mb-1 line-clamp-2">
                     {produto.descricao}
                   </p>
-                  {/* Exibir preço promocional ou normal */}
                   {produto.preco_promocional > 0 &&
                   parseFloat(produto.preco_promocional) <
                     parseFloat(produto.preco) ? (
@@ -755,7 +910,6 @@ const Admin = () => {
                         : "0,00"}
                     </p>
                   )}
-                  {/* EXIBIR PESO E DIMENSÕES */}
                   <div className="text-xs text-gray-600 mt-2">
                     <p>
                       <strong>Peso:</strong> {produto.peso || "N/A"} kg
@@ -766,6 +920,15 @@ const Admin = () => {
                       {produto.comprimento || "N/A"}cm (C)
                     </p>
                   </div>
+                  {produto.galeriaImagens &&
+                    produto.galeriaImagens.length > 0 && (
+                      <div className="text-xs text-gray-600 mt-1">
+                        <p>
+                          <strong>Imagens na Galeria:</strong>{" "}
+                          {produto.galeriaImagens.length}
+                        </p>
+                      </div>
+                    )}
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 justify-end w-full md:w-auto md:ml-4 flex-shrink-0">
