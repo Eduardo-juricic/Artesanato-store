@@ -4,13 +4,7 @@ import { useCart } from "../context/CartContext";
 import { Link as RouterLink } from "react-router-dom";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { db } from "../FirebaseConfig";
-import {
-  collection,
-  addDoc,
-  serverTimestamp,
-  // doc, // Não é mais usado aqui, mas mantido se for necessário em outro lugar
-  // updateDoc, // Não é mais usado aqui, mas mantido se for necessário em outro lugar
-} from "firebase/firestore";
+import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 
 function CartPage() {
   const {
@@ -200,16 +194,23 @@ function CartPage() {
     else if (!/^[A-Z]{2}$/i.test(cliente.estado))
       errors.estado = "Estado inválido (sigla com 2 letras).";
 
-    // Validação da observação de cada item
+    // Validação da observação de cada item (agora considera item.observacaoObrigatoria)
     cartItems.forEach((item) => {
-      const itemObsKey = `itemObservation-${item.id}`;
-      if (!item.itemObservation || !item.itemObservation.trim()) {
+      const itemObsErrorKey = `itemObservation-${item.id}`; // Variável definida corretamente aqui
+      // Verifica se a observação é obrigatória E se está vazia ou muito curta
+      if (
+        item.observacaoObrigatoria &&
+        (!item.itemObservation || item.itemObservation.trim() === "")
+      ) {
         errors[
-          itemObsKey
+          itemObsErrorKey
         ] = `Detalhes da personalização para "${item.nome}" são obrigatórios.`;
-      } else if (item.itemObservation.trim().length < 5) {
+      } else if (
+        item.observacaoObrigatoria &&
+        item.itemObservation.trim().length < 5
+      ) {
         errors[
-          itemObsKey
+          itemObsErrorKey
         ] = `Forneça mais detalhes para "${item.nome}" (mín. 5 caracteres).`;
       }
     });
@@ -261,7 +262,7 @@ function CartPage() {
     let orderId = null;
 
     try {
-      // Cria o pedido no Firestore, incluindo detalhes do frete
+      // Cria o pedido no Firestore, incluindo detalhes do frete E IMAGENS
       const newOrderRef = await addDoc(collection(db, "pedidos"), {
         cliente: {
           nomeCompleto: cliente.nomeCompleto,
@@ -289,6 +290,8 @@ function CartPage() {
               : item.preco
           ),
           observacaoProduto: item.itemObservation || "",
+          imagemPrincipal: item.imagem || "", // Imagem principal do produto
+          galeriaImagens: item.galeriaImagens || [], // TODAS AS IMAGENS DA GALERIA DO PRODUTO
         })),
         totalAmount: totalComFrete, // Salva o total COM frete
         subtotalAmount: total, // Salva o subtotal dos produtos
@@ -445,7 +448,7 @@ function CartPage() {
                     .map((c) => c.trim())
                     .filter((c) => c !== "")
                 : [];
-              const itemObsErrorKey = `itemObservation-${item.id}`;
+              const itemObsErrorKey = `itemObservation-${item.id}`; // Variável definida corretamente aqui
               const itemPrice =
                 item.preco_promocional &&
                 Number(item.preco_promocional) < Number(item.preco)
@@ -506,6 +509,25 @@ function CartPage() {
                           </ul>
                         </div>
                       )}
+                      {/* ADIÇÃO AQUI: Exibir imagens da galeria no item do carrinho, se existirem */}
+                      {item.galeriaImagens &&
+                        item.galeriaImagens.length > 0 && (
+                          <div className="mt-2">
+                            <p className="text-sm font-semibold text-gray-700">
+                              Outras Variações do produto:
+                            </p>
+                            <div className="flex flex-wrap gap-2 mt-1">
+                              {item.galeriaImagens.map((imgUrl, idx) => (
+                                <img
+                                  key={idx}
+                                  src={imgUrl}
+                                  alt={`${item.nome} - Galeria ${idx + 1}`}
+                                  className="w-16 h-16 object-cover rounded-md border border-gray-200"
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        )}
                     </div>
 
                     {/* Campo de observação por item */}
@@ -559,7 +581,7 @@ function CartPage() {
                         </label>
                         <div className="flex items-center border border-gray-300 rounded-md shadow-sm">
                           <button
-                            type="button" // Adicionado type="button" para evitar submit de form
+                            type="button"
                             onClick={() =>
                               handleDecreaseQuantity(item.id, item.quantity)
                             }
@@ -582,7 +604,7 @@ function CartPage() {
                             }}
                           />
                           <button
-                            type="button" // Adicionado type="button" para evitar submit de form
+                            type="button"
                             onClick={() =>
                               handleIncreaseQuantity(item.id, item.quantity)
                             }
@@ -594,7 +616,7 @@ function CartPage() {
                       </div>
                       <div className="flex">
                         <button
-                          type="button" // Adicionado type="button" para evitar submit de form
+                          type="button"
                           onClick={() => handleRemoveItem(item.id)}
                           className="text-red-600 hover:text-red-800 transition duration-200 ease-in-out font-medium"
                         >
