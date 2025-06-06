@@ -1,4 +1,3 @@
-// Admin.jsx
 import { useState, useEffect } from "react";
 import {
   collection,
@@ -21,10 +20,15 @@ const Admin = () => {
     nome: "",
     descricao: "",
     preco: "",
-    imagem: null, // This will hold the File object for new uploads
-    currentImageUrl: "", // New state to hold the existing image URL
+    imagem: null,
+    currentImageUrl: "",
     destaque_curto: "",
     preco_promocional: "",
+    // CAMPOS NOVOS PARA O FRETE
+    peso: "",
+    altura: "",
+    largura: "",
+    comprimento: "",
   });
   const [editandoId, setEditandoId] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -106,10 +110,9 @@ const Admin = () => {
     setUploading(true);
 
     try {
-      let imageUrl = form.currentImageUrl; // Start with the current image URL if editing
+      let imageUrl = form.currentImageUrl;
 
       if (form.imagem) {
-        // If a new image file is selected
         const formData = new FormData();
         formData.append("file", form.imagem);
         formData.append(
@@ -130,14 +133,12 @@ const Admin = () => {
 
         if (!response.ok) {
           const errorData = await response.json();
-          console.error("Erro do Cloudinary:", errorData);
           throw new Error(
-            `Erro ao enviar imagem para o Cloudinary: ${
+            `Erro do Cloudinary: ${
               errorData.error?.message || response.statusText
             }`
           );
         }
-
         const data = await response.json();
         imageUrl = data.secure_url;
       }
@@ -146,32 +147,37 @@ const Admin = () => {
         nome: form.nome,
         descricao: form.descricao,
         preco: Number(form.preco),
-        imagem: imageUrl, // Use the updated imageUrl
+        imagem: imageUrl,
         destaque_curto: form.destaque_curto,
         preco_promocional: form.preco_promocional
           ? Number(form.preco_promocional)
           : 0,
+        peso: Number(form.peso),
+        altura: Number(form.altura),
+        largura: Number(form.largura),
+        comprimento: Number(form.comprimento),
       };
 
       if (editandoId) {
-        const ref = doc(db, "produtos", editandoId);
-        await updateDoc(ref, produtoData);
-        setEditandoId(null);
+        await updateDoc(doc(db, "produtos", editandoId), produtoData);
       } else {
         await addDoc(produtosRef, produtoData);
       }
 
-      // Reset form fields after submission
       setForm({
         nome: "",
         descricao: "",
         preco: "",
         imagem: null,
-        currentImageUrl: "", // Clear current image URL as well
+        currentImageUrl: "",
         destaque_curto: "",
         preco_promocional: "",
+        peso: "",
+        altura: "",
+        largura: "",
+        comprimento: "",
       });
-      // Clear the file input visually
+      setEditandoId(null);
       if (document.querySelector('input[type="file"]')) {
         document.querySelector('input[type="file"]').value = "";
       }
@@ -212,14 +218,17 @@ const Admin = () => {
 
   const editar = (produto) => {
     setForm({
-      nome: produto.nome,
-      descricao: produto.descricao,
-      preco: produto.preco,
-      imagem: null, // Keep this as null for new file selection
-      currentImageUrl: produto.imagem || "", // Set the existing image URL
+      nome: produto.nome || "",
+      descricao: produto.descricao || "",
+      preco: produto.preco || "",
+      imagem: null,
+      currentImageUrl: produto.imagem || "",
       destaque_curto: produto.destaque_curto || "",
       preco_promocional: produto.preco_promocional || "",
-      id: produto.id,
+      peso: produto.peso || "",
+      altura: produto.altura || "",
+      largura: produto.largura || "",
+      comprimento: produto.comprimento || "",
     });
     setEditandoId(produto.id);
     window.scrollTo(0, 0);
@@ -227,21 +236,21 @@ const Admin = () => {
 
   const definirDestaque = async (id) => {
     const produtoParaAtualizar = produtos.find((p) => p.id === id);
-    const novoEstadoDestaque = !produtoParaAtualizar?.destaque;
+    if (!produtoParaAtualizar) return;
+    const novoEstadoDestaque = !produtoParaAtualizar.destaque;
     const updatesBatch = [];
 
     produtos.forEach((p) => {
       if (p.destaque && p.id !== id) {
-        const ref = doc(db, "produtos", p.id);
-        updatesBatch.push(updateDoc(ref, { destaque: false }));
+        updatesBatch.push(
+          updateDoc(doc(db, "produtos", p.id), { destaque: false })
+        );
       }
     });
 
-    const refProdutoClicado = doc(db, "produtos", id);
     updatesBatch.push(
-      updateDoc(refProdutoClicado, { destaque: novoEstadoDestaque })
+      updateDoc(doc(db, "produtos", id), { destaque: novoEstadoDestaque })
     );
-
     await Promise.all(updatesBatch);
     buscarProdutos();
   };
@@ -258,7 +267,6 @@ const Admin = () => {
         </button>
       </div>
 
-      {/* Seção de Pedidos Recebidos */}
       <div className="mt-10">
         <div
           className="flex justify-between items-center mb-6 cursor-pointer"
@@ -275,162 +283,53 @@ const Admin = () => {
         </div>
 
         {showOrders && (
-          <>
+          <div className="space-y-6">
             {pedidos.length === 0 && (
               <p className="text-gray-600">Nenhum pedido recebido ainda.</p>
             )}
-            <div className="space-y-6">
-              {pedidos.map((pedido) => (
-                <div
-                  key={pedido.id}
-                  className="border p-6 rounded-lg shadow-lg bg-white"
-                >
-                  <div className="flex flex-col sm:flex-row justify-between items-start mb-3">
-                    <h3 className="font-bold text-xl text-blue-700 mb-2 sm:mb-0">
-                      Pedido ID: {pedido.id}
-                    </h3>
-                    <span className="text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded">
-                      Data:{" "}
-                      {pedido.dataCriacao?.toDate
-                        ? pedido.dataCriacao.toDate().toLocaleString("pt-BR", {
+            {pedidos.map((pedido) => (
+              <div
+                key={pedido.id}
+                className="border p-6 rounded-lg shadow-lg bg-white"
+              >
+                <div className="flex flex-col sm:flex-row justify-between items-start mb-3">
+                  <h3 className="font-bold text-xl text-blue-700 mb-2 sm:mb-0">
+                    Pedido ID: {pedido.id}
+                  </h3>
+                  <span className="text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                    Data:{" "}
+                    {pedido.dataCriacao?.toDate
+                      ? pedido.dataCriacao
+                          .toDate()
+                          .toLocaleString("pt-BR", {
                             dateStyle: "short",
                             timeStyle: "short",
                           })
-                        : "Data não disponível"}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3 mb-4 text-sm">
-                    <div>
-                      <p>
-                        <strong>Status Pedido:</strong>{" "}
-                        <span className="font-semibold">
-                          {pedido.statusPedido || "N/A"}
-                        </span>
-                      </p>
-                    </div>
-                    <div>
-                      <p>
-                        <strong>Status Pagamento MP:</strong>{" "}
-                        <span
-                          className={`font-semibold ${
-                            pedido.statusPagamentoMP === "approved"
-                              ? "text-green-600"
-                              : "text-orange-500"
-                          }`}
-                        >
-                          {pedido.statusPagamentoMP || "N/A"}
-                        </span>
-                      </p>
-                    </div>
-                    <div>
-                      <p>
-                        <strong>Total do Pedido:</strong>{" "}
-                        <span className="font-semibold">
-                          R$ {pedido.totalAmount?.toFixed(2) || "0.00"}
-                        </span>
-                      </p>
-                    </div>
-                    {pedido.paymentIdMP && (
-                      <div>
-                        <p>
-                          <strong>ID Pagamento MP:</strong> {pedido.paymentIdMP}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="mb-4 p-4 bg-blue-50 rounded-md border border-blue-200">
-                    <h4 className="font-semibold text-md text-blue-800 mb-2">
-                      Detalhes do Cliente:
-                    </h4>
-                    <p>
-                      <strong>Nome:</strong>{" "}
-                      {pedido.cliente?.nomeCompleto || "N/A"}
-                    </p>
-                    <p>
-                      <strong>Email:</strong> {pedido.cliente?.email || "N/A"}
-                    </p>
-                    <p>
-                      <strong>Telefone:</strong>{" "}
-                      {pedido.cliente?.telefone || "N/A"}
-                    </p>
-                    <p>
-                      <strong>CPF:</strong> {pedido.cliente?.cpf || "N/A"}
-                    </p>
-                  </div>
-
-                  <div className="mb-4 p-4 bg-green-50 rounded-md border border-green-200">
-                    <h4 className="font-semibold text-md text-green-800 mb-2">
-                      Endereço de Entrega:
-                    </h4>
-                    <p>
-                      {pedido.cliente?.endereco?.logradouro || "N/A"},{" "}
-                      {pedido.cliente?.endereco?.numero || "N/A"}
-                    </p>
-                    {pedido.cliente?.endereco?.complemento && (
-                      <p>
-                        Complemento: {pedido.cliente?.endereco?.complemento}
-                      </p>
-                    )}
-                    <p>
-                      {pedido.cliente?.endereco?.bairro || "N/A"} -{" "}
-                      {pedido.cliente?.endereco?.cidade || "N/A"},{" "}
-                      {pedido.cliente?.endereco?.estado || "N/A"}
-                    </p>
-                    <p>CEP: {pedido.cliente?.endereco?.cep || "N/A"}</p>
-                  </div>
-
-                  <div className="mb-4">
-                    <h4 className="font-semibold text-md text-gray-800 mb-2">
-                      Itens do Pedido:
-                    </h4>
-                    <ul className="list-disc list-inside pl-4 text-sm space-y-1">
-                      {pedido.items?.map((item, index) => (
-                        <li key={index} className="text-gray-700">
-                          {item.nome || "Item sem nome"} (Qtd:{" "}
-                          {item.quantity || 0}) - R${" "}
-                          {parseFloat(item.precoUnitario || 0).toFixed(2)}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  {pedido.observacao && (
-                    <div className="mt-4 p-4 bg-yellow-50 rounded-md border border-yellow-200">
-                      <h4 className="font-semibold text-md text-yellow-800 mb-1">
-                        Observação do Cliente:
-                      </h4>
-                      <p className="text-sm text-gray-700">
-                        {pedido.observacao}
-                      </p>
-                    </div>
-                  )}
-
-                  <div className="mt-6 pt-4 border-t border-gray-200 flex justify-end">
-                    <button
-                      onClick={() => deletarPedido(pedido.id)}
-                      className="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50 transition-colors duration-200 text-sm shadow"
-                    >
-                      Excluir Pedido
-                    </button>
-                  </div>
+                      : "Data não disponível"}
+                  </span>
                 </div>
-              ))}
-            </div>
-          </>
+                <div className="mt-6 pt-4 border-t border-gray-200 flex justify-end">
+                  <button
+                    onClick={() => deletarPedido(pedido.id)}
+                    className="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50 transition-colors duration-200 text-sm shadow"
+                  >
+                    Excluir Pedido
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
-      {/* Seção de Adicionar/Editar Produto */}
       <form
         onSubmit={handleSubmit}
-        className="space-y-4 mb-10 p-6 border rounded-lg shadow-lg bg-white"
+        className="space-y-4 my-10 p-6 border rounded-lg shadow-lg bg-white"
       >
         <h2 className="text-2xl font-semibold mb-4 text-gray-700">
           {editandoId ? "Editar Produto" : "Adicionar Novo Produto"}
         </h2>
-        <textarea
+        <input
           type="text"
           placeholder="Nome do Produto"
           value={form.nome}
@@ -466,11 +365,54 @@ const Admin = () => {
         />
         <textarea
           type="text"
-          placeholder="Características Principais (Separe cada uma com ;)"
+          placeholder="Características Principais (Separe com ;)"
           value={form.destaque_curto}
           onChange={(e) => setForm({ ...form, destaque_curto: e.target.value })}
           className="border p-2 w-full rounded h-20 resize-y"
         />
+
+        <h3 className="text-lg font-medium text-gray-700 pt-2">
+          Dimensões e Peso para Frete
+        </h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <input
+            type="number"
+            placeholder="Peso (kg)"
+            value={form.peso}
+            onChange={(e) => setForm({ ...form, peso: e.target.value })}
+            className="border p-2 w-full rounded"
+            step="0.01"
+            required
+          />
+          <input
+            type="number"
+            placeholder="Altura (cm)"
+            value={form.altura}
+            onChange={(e) => setForm({ ...form, altura: e.target.value })}
+            className="border p-2 w-full rounded"
+            step="0.1"
+            required
+          />
+          <input
+            type="number"
+            placeholder="Largura (cm)"
+            value={form.largura}
+            onChange={(e) => setForm({ ...form, largura: e.target.value })}
+            className="border p-2 w-full rounded"
+            step="0.1"
+            required
+          />
+          <input
+            type="number"
+            placeholder="Comprimento (cm)"
+            value={form.comprimento}
+            onChange={(e) => setForm({ ...form, comprimento: e.target.value })}
+            className="border p-2 w-full rounded"
+            step="0.1"
+            required
+          />
+        </div>
+
         <label className="block text-sm font-medium text-gray-700 mt-2">
           Imagem do Produto:
         </label>
@@ -480,7 +422,7 @@ const Admin = () => {
           onChange={handleFileChange}
           className="border p-2 w-full rounded file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
         />
-        {form.currentImageUrl && ( // Display current image if exists
+        {form.currentImageUrl && (
           <div className="mt-2">
             <p className="text-sm text-gray-600 mb-1">Imagem atual:</p>
             <img
@@ -511,9 +453,13 @@ const Admin = () => {
                 descricao: "",
                 preco: "",
                 imagem: null,
-                currentImageUrl: "", // Clear on cancel
+                currentImageUrl: "",
                 destaque_curto: "",
                 preco_promocional: "",
+                peso: "",
+                altura: "",
+                largura: "",
+                comprimento: "",
               });
               if (document.querySelector('input[type="file"]')) {
                 document.querySelector('input[type="file"]').value = "";
@@ -526,7 +472,6 @@ const Admin = () => {
         )}
       </form>
 
-      {/* Seção de Produtos Cadastrados */}
       <div className="mb-10">
         <h2 className="text-2xl font-semibold mb-4 text-gray-700">
           Produtos Cadastrados
@@ -552,33 +497,14 @@ const Admin = () => {
                   <h3 className="font-bold text-xl text-gray-800">
                     {produto.nome}
                   </h3>
-                  {produto.destaque_curto && (
-                    <p className="text-sm text-gray-500 italic mb-1">
-                      {produto.destaque_curto}
+                  <div className="text-xs text-gray-500 mt-2">
+                    <p>Peso: {produto.peso || "N/A"} kg</p>
+                    <p>
+                      Dimensões: {produto.altura || "N/A"}cm x{" "}
+                      {produto.largura || "N/A"}cm x{" "}
+                      {produto.comprimento || "N/A"}cm
                     </p>
-                  )}
-                  <p className="text-gray-700 text-sm mb-1 line-clamp-2">
-                    {produto.descricao}
-                  </p>
-                  {produto.preco_promocional > 0 &&
-                  parseFloat(produto.preco_promocional) <
-                    parseFloat(produto.preco) ? (
-                    <div className="flex items-center">
-                      <p className="text-gray-500 line-through text-md mr-2">
-                        R$ {parseFloat(produto.preco).toFixed(2)}
-                      </p>
-                      <p className="text-xl font-bold text-orange-600">
-                        R$ {parseFloat(produto.preco_promocional).toFixed(2)}
-                      </p>
-                    </div>
-                  ) : (
-                    <p className="text-green-700 font-semibold text-lg">
-                      R${" "}
-                      {produto.preco
-                        ? parseFloat(produto.preco).toFixed(2)
-                        : "0.00"}
-                    </p>
-                  )}
+                  </div>
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 justify-end w-full md:w-auto md:ml-4 flex-shrink-0">

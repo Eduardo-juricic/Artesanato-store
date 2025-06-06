@@ -13,6 +13,7 @@
     "@heroicons/react": "^2.2.0",
     "@mercadopago/sdk-react": "^1.0.3",
     "cloudinary": "^2.6.1",
+    "cors": "^2.8.5",
     "firebase": "^11.7.1",
     "framer-motion": "^12.12.1",
     "react": "^19.1.0",
