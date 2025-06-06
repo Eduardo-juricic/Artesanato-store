@@ -127,7 +127,7 @@ const allFunctionOptions = {
 
 // --- DEFINIÇÃO DAS FUNÇÕES ---
 
-// 1. Função createPaymentPreference (RESTAURADA E INTEGRADA)
+// 1. Função createPaymentPreference
 exports.createPaymentPreference = functions.https.onCall(
   allFunctionOptions, // Usa as opções que dão acesso aos secrets
   async (request) => {
@@ -237,7 +237,7 @@ exports.createPaymentPreference = functions.https.onCall(
   }
 );
 
-// 2. Função processPaymentNotification (DO SEU CÓDIGO ORIGINAL - SEM ALTERAÇÕES SIGNIFICATIVAS)
+// 2. Função processPaymentNotification
 exports.processPaymentNotification = functions.https.onRequest(
   allFunctionOptions, // Usa as opções que dão acesso aos secrets
   async (req, res) => {
@@ -359,7 +359,7 @@ exports.processPaymentNotification = functions.https.onRequest(
   }
 );
 
-// 3. NOVA FUNÇÃO PARA CALCULAR FRETE (MANTIDA DO SEU CÓDIGO ATUAL)
+// 3. NOVA FUNÇÃO PARA CALCULAR FRETE
 exports.calculateShipping = functions.https.onCall(
   allFunctionOptions, // Usa as mesmas opções para ter acesso ao secret do Melhor Envio
   async (request) => {
@@ -381,8 +381,10 @@ exports.calculateShipping = functions.https.onCall(
       );
     }
 
-    // --- DADOS DO REMETENTE (Você já substituiu corretamente) ---
     const fromCEP = "28979440"; // CEP de origem do seu negócio
+
+    // IDs dos serviços dos Correios que você deseja exibir: 1 (PAC) e 2 (SEDEX)
+    const desiredServiceIds = ["1", "2"];
 
     const payload = {
       from: { postal_code: fromCEP },
@@ -397,8 +399,9 @@ exports.calculateShipping = functions.https.onCall(
         quantity: Number(item.quantity),
       })),
       options: { receipt: false, own_hand: false },
-      services: "1,2,3,4", // Correios: 1 (PAC), 2 (SEDEX), 3 (Minienvios), 4 (SEDEX 12)
-      // Ajuste os services conforme as opções que você quer oferecer
+      // Inclua os IDs de serviços que você *deseja* que o Melhor Envio considere na busca.
+      // É uma boa prática ser abrangente aqui e filtrar depois para garantir a disponibilidade.
+      services: "1,2,3,4,17,18", // Inclui PAC, SEDEX, Mini Envios, SEDEX 12, Jadlog Package, Jadlog .Com
     };
 
     logger.info("Payload para Melhor Envio:", JSON.stringify(payload, null, 2));
@@ -421,28 +424,50 @@ exports.calculateShipping = functions.https.onCall(
       const validOptions = response.data.filter((option) => !option.error);
       logger.info(`Recebidas ${validOptions.length} opções de frete válidas.`);
 
-      if (validOptions.length === 0 && response.data.length > 0) {
-        // Se todas as opções retornaram com erro, loga o primeiro erro para depuração
-        const firstError = response.data.find((opt) => opt.error);
-        if (firstError) {
+      // Filtra as opções válidas para incluir SOMENTE os IDs desejados (PAC e SEDEX)
+      const filteredOptions = validOptions.filter((option) =>
+        desiredServiceIds.includes(String(option.id))
+      );
+
+      logger.info(
+        `Retornando ${filteredOptions.length} opções de frete filtradas.`
+      );
+
+      if (filteredOptions.length === 0) {
+        // Alterado para verificar filteredOptions diretamente
+        // Se após a filtragem por ID não sobrou nada
+        if (validOptions.length > 0) {
+          // Havia opções válidas, mas nenhuma era a desejada
           throw new functions.https.HttpsError(
             "not-found",
-            `Frete indisponível: ${firstError.error}` // Mensagem de erro para o cliente
+            "Nenhuma opção de frete disponível para as transportadoras selecionadas neste CEP."
           );
+        } else if (response.data.length > 0) {
+          // A API retornou dados, mas todos com erro ou irrelevantes
+          const firstError = response.data.find((opt) => opt.error);
+          if (firstError) {
+            throw new functions.https.HttpsError(
+              "not-found",
+              `Frete indisponível: ${firstError.error}`
+            );
+          }
         }
+        // Se response.data estiver vazio, significa que não houve nenhuma opção (nem erro)
+        throw new functions.https.HttpsError(
+          "not-found",
+          "Nenhuma opção de frete encontrada para este CEP."
+        );
       }
 
-      // Retorna as opções de frete válidas para o frontend
-      return validOptions;
+      // Retorna APENAS as opções de frete válidas E filtradas para o frontend
+      return filteredOptions;
     } catch (error) {
       const errorMsg = error.response ? error.response.data : error.message;
       logger.error("Erro ao chamar API do Melhor Envio:", errorMsg);
 
-      // Determina uma mensagem de erro mais amigável para o cliente
       let userFriendlyMessage =
         "Não foi possível calcular o frete no momento. Por favor, tente novamente mais tarde.";
       if (error.response && error.response.data && error.response.data.error) {
-        // Se o Melhor Envio retornar um erro específico no corpo da resposta
         if (typeof error.response.data.error === "string") {
           userFriendlyMessage = `Erro ao calcular frete: ${error.response.data.error}`;
         } else if (
