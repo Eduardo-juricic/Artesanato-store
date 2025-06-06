@@ -4,7 +4,13 @@ import { useCart } from "../context/CartContext";
 import { Link as RouterLink } from "react-router-dom";
 import { getFunctions, httpsCallable } from "firebase/functions";
 import { db } from "../FirebaseConfig";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import {
+  collection,
+  addDoc,
+  serverTimestamp,
+  // doc, // Não é mais usado aqui, mas mantido se for necessário em outro lugar
+  // updateDoc, // Não é mais usado aqui, mas mantido se for necessário em outro lugar
+} from "firebase/firestore";
 
 function CartPage() {
   const {
@@ -16,13 +22,21 @@ function CartPage() {
     updateItemObservation,
   } = useCart();
 
+  // Novos estados para frete (do seu código atual)
+  const [cep, setCep] = useState("");
+  const [shippingOptions, setShippingOptions] = useState([]);
+  const [selectedShipping, setSelectedShipping] = useState(null);
+  const [loadingShipping, setLoadingShipping] = useState(false);
+  const [shippingError, setShippingError] = useState("");
+
+  // Estados existentes (do seu código original)
   const [loadingPayment, setLoadingPayment] = useState(false);
   const [cliente, setCliente] = useState({
     nomeCompleto: "",
     email: "",
     telefone: "",
     cpf: "",
-    cep: "",
+    cep: "", // Este CEP será o do cliente, diferente do CEP para cálculo de frete
     logradouro: "",
     numero: "",
     complemento: "",
@@ -32,24 +46,49 @@ function CartPage() {
   });
   const [formErrors, setFormErrors] = useState({});
 
+  // Funções callable do Firebase (do seu código atual)
+  const functionsInstance = getFunctions(undefined, "southamerica-east1");
+  const createPreferenceCallable = httpsCallable(
+    functionsInstance,
+    "createPaymentPreference"
+  );
+  const calculateShippingCallable = httpsCallable(
+    functionsInstance,
+    "calculateShipping"
+  );
+
+  // Funções de quantidade e remoção (do seu código original, com ajuste para frete)
   const handleQuantityChange = (productId, quantity) => {
     const newQuantity = Math.max(1, parseInt(quantity, 10) || 1);
     updateQuantity(productId, newQuantity);
+    // IMPORTANTE: Reseta o frete se a quantidade mudar, pois o peso/dimensões podem mudar
+    setShippingOptions([]);
+    setSelectedShipping(null);
   };
 
   const handleIncreaseQuantity = (productId, currentQuantity) => {
     updateQuantity(productId, currentQuantity + 1);
+    // Reseta o frete
+    setShippingOptions([]);
+    setSelectedShipping(null);
   };
 
   const handleDecreaseQuantity = (productId, currentQuantity) => {
     const newQuantity = Math.max(1, currentQuantity - 1);
     updateQuantity(productId, newQuantity);
+    // Reseta o frete
+    setShippingOptions([]);
+    setSelectedShipping(null);
   };
 
   const handleRemoveItem = (productId) => {
     removeItem(productId);
+    // Reseta o frete
+    setShippingOptions([]);
+    setSelectedShipping(null);
   };
 
+  // Funções de cliente e observação (do seu código original)
   const handleClienteChange = (e) => {
     const { name, value } = e.target;
     setCliente((prevCliente) => ({ ...prevCliente, [name]: value }));
@@ -58,7 +97,6 @@ function CartPage() {
     }
   };
 
-  // Handler para limpar erro da observação do item quando o usuário digita
   const handleItemObservationChange = (itemId, value) => {
     updateItemObservation(itemId, value);
     const errorKey = `itemObservation-${itemId}`;
@@ -67,11 +105,76 @@ function CartPage() {
     }
   };
 
+  // Lógica de cálculo de frete (do seu código atual)
+  const handleCalculateShipping = async () => {
+    // Usar o CEP do formulário do cliente para o cálculo do frete.
+    // Você pode usar o estado `cep` que já está no input de cálculo de frete,
+    // mas se o usuário digitar o CEP no campo de cliente e não no campo de frete,
+    // o cálculo não será disparado. Considere sincronizar ou usar um único campo de CEP.
+    // Por simplicidade, vou usar o estado `cep` do input de frete.
+    const cepParaCalculo = cep.replace(/\D/g, "");
+
+    if (!/^\d{8}$/.test(cepParaCalculo)) {
+      setShippingError("Por favor, insira um CEP válido com 8 dígitos.");
+      setShippingOptions([]); // Limpa opções antigas
+      setSelectedShipping(null); // Limpa seleção antiga
+      return;
+    }
+
+    setLoadingShipping(true);
+    setShippingError("");
+    setSelectedShipping(null);
+    setShippingOptions([]);
+
+    const itemsPayload = cartItems.map((item) => ({
+      id: item.id,
+      largura: item.largura,
+      altura: item.altura,
+      comprimento: item.comprimento,
+      peso: item.peso,
+      quantity: item.quantity,
+      precoUnitario: parseFloat(
+        item.preco_promocional &&
+          Number(item.preco_promocional) < Number(item.preco)
+          ? item.preco_promocional
+          : item.preco
+      ),
+    }));
+
+    // Verifica se há itens no carrinho para calcular o frete
+    if (itemsPayload.length === 0) {
+      setShippingError("Adicione produtos ao carrinho para calcular o frete.");
+      setLoadingShipping(false);
+      return;
+    }
+
+    try {
+      const result = await calculateShippingCallable({
+        cep_destino: cepParaCalculo,
+        items: itemsPayload,
+      });
+
+      if (result.data && result.data.length > 0) {
+        setShippingOptions(result.data);
+      } else {
+        setShippingError("Nenhuma opção de frete encontrada para este CEP.");
+      }
+    } catch (error) {
+      console.error("Erro ao calcular frete:", error);
+      setShippingError(
+        error.message || "Não foi possível calcular o frete. Tente novamente."
+      );
+    } finally {
+      setLoadingShipping(false);
+    }
+  };
+
+  // Validação do formulário (do seu código original, com adição do frete)
   const validateForm = () => {
     const errors = {};
     // Validações do cliente
     if (!cliente.nomeCompleto.trim())
-      errors.nomeCompleto = "Nome completo é obrigatório.";
+      errors.nomeComplepleto = "Nome completo é obrigatório.";
     else if (cliente.nomeCompleto.trim().split(" ").length < 2)
       errors.nomeCompleto = "Por favor, insira nome e sobrenome.";
     if (!cliente.email.trim()) errors.email = "Email é obrigatório.";
@@ -83,6 +186,8 @@ function CartPage() {
     if (!cliente.cpf.trim()) errors.cpf = "CPF é obrigatório.";
     else if (!/^\d{11}$/.test(cliente.cpf.replace(/\D/g, "")))
       errors.cpf = "CPF inválido (11 dígitos).";
+
+    // Validações do endereço
     if (!cliente.cep.trim()) errors.cep = "CEP é obrigatório.";
     else if (!/^\d{5}-?\d{3}$/.test(cliente.cep.replace(/\D/g, "")))
       errors.cep = "CEP inválido.";
@@ -95,52 +200,46 @@ function CartPage() {
     else if (!/^[A-Z]{2}$/i.test(cliente.estado))
       errors.estado = "Estado inválido (sigla com 2 letras).";
 
-    // ATUALIZAÇÃO: Validar observação para CADA item no carrinho
+    // Validação da observação de cada item
     cartItems.forEach((item) => {
       const itemObsKey = `itemObservation-${item.id}`;
-      // Verifique se itemObservation é null, undefined ou uma string vazia após trim()
       if (!item.itemObservation || !item.itemObservation.trim()) {
         errors[
           itemObsKey
         ] = `Detalhes da personalização para "${item.nome}" são obrigatórios.`;
       } else if (item.itemObservation.trim().length < 5) {
-        // Exemplo de tamanho mínimo
         errors[
           itemObsKey
         ] = `Forneça mais detalhes para "${item.nome}" (mín. 5 caracteres).`;
       }
     });
 
+    // NOVA VALIDAÇÃO: Frete
+    if (!selectedShipping) {
+      errors.shipping = "Por favor, calcule e selecione uma opção de frete.";
+    }
+
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
 
   const total = getTotal();
+  // Calcula o total com frete (do seu código atual)
+  const totalComFrete = selectedShipping
+    ? total + parseFloat(selectedShipping.price)
+    : total;
 
-  const functionsInstance = getFunctions(undefined, "southamerica-east1");
-  const createPreferenceCallable = httpsCallable(
-    functionsInstance,
-    "createPaymentPreference"
-  );
-
+  // Lógica de Checkout (combinada do seu código original e atual)
   const handleCheckout = async (e) => {
     e.preventDefault();
-    // A validação agora é feita primeiro, incluindo as observações dos itens.
-    // Precisamos re-validar aqui para capturar os erros das observações dos itens
-    // que podem ter sido atualizados após a última chamada a setFormErrors.
-    // No entanto, validateForm() já chama setFormErrors.
-    // A chamada aqui garante que os erros mais recentes sejam considerados.
     if (!validateForm()) {
-      alert("Por favor, corrija os erros no formulário antes de prosseguir.");
-      // Tenta focar no primeiro campo com erro
-      // A ordem dos Object.keys(formErrors) pode não ser garantida,
-      // então o foco pode não ser no primeiro erro visual.
-      // Para um foco mais preciso, você pode priorizar campos específicos ou
-      // iterar sobre uma ordem predefinida de chaves de erro.
+      alert(
+        "Por favor, corrija os erros no formulário, incluindo a seleção do frete, antes de prosseguir."
+      );
+      // Tentativa de focar no primeiro erro
       const firstErrorKey = Object.keys(formErrors).find(
         (key) => formErrors[key]
       );
-
       if (firstErrorKey) {
         const firstErrorElement = document.getElementById(firstErrorKey);
         if (firstErrorElement) {
@@ -149,21 +248,6 @@ function CartPage() {
             block: "center",
           });
           firstErrorElement.focus({ preventScroll: true });
-        } else {
-          // Fallback para o primeiro item com erro de observação, se o ID do campo não for direto
-          const itemErrorKey = Object.keys(formErrors).find((k) =>
-            k.startsWith("itemObservation-")
-          );
-          if (itemErrorKey) {
-            const itemErrorElement = document.getElementById(itemErrorKey);
-            if (itemErrorElement) {
-              itemErrorElement.scrollIntoView({
-                behavior: "smooth",
-                block: "center",
-              });
-              itemErrorElement.focus({ preventScroll: true });
-            }
-          }
         }
       }
       return;
@@ -172,9 +256,12 @@ function CartPage() {
       alert("Seu carrinho está vazio!");
       return;
     }
+
     setLoadingPayment(true);
     let orderId = null;
+
     try {
+      // Cria o pedido no Firestore, incluindo detalhes do frete
       const newOrderRef = await addDoc(collection(db, "pedidos"), {
         cliente: {
           nomeCompleto: cliente.nomeCompleto,
@@ -203,7 +290,15 @@ function CartPage() {
           ),
           observacaoProduto: item.itemObservation || "",
         })),
-        totalAmount: total,
+        totalAmount: totalComFrete, // Salva o total COM frete
+        subtotalAmount: total, // Salva o subtotal dos produtos
+        shippingDetails: {
+          // Salva detalhes do frete
+          carrier: selectedShipping.name,
+          price: parseFloat(selectedShipping.price),
+          deliveryTime: selectedShipping.delivery_time,
+          cep: cep.replace(/\D/g, ""), // CEP usado para cálculo do frete
+        },
         statusPedido: "pendente_pagamento",
         statusPagamentoMP: "pendente",
         dataCriacao: serverTimestamp(),
@@ -216,37 +311,49 @@ function CartPage() {
       setLoadingPayment(false);
       return;
     }
-    const itemsPayload = cartItems.map((item) => ({
-      id: item.id,
-      title: item.nome,
-      description: item.descricao || item.nome,
-      quantity: item.quantity,
-      unit_price: parseFloat(
-        item.preco_promocional &&
-          Number(item.preco_promocional) < Number(item.preco)
-          ? item.preco_promocional
-          : item.preco
-      ),
-    }));
+
+    // Prepara itens para o Mercado Pago, incluindo o custo do frete
+    const itemsParaPagamento = [
+      ...cartItems.map((item) => ({
+        id: item.id,
+        title: item.nome,
+        description: item.descricao || item.nome,
+        quantity: item.quantity,
+        unit_price: parseFloat(
+          item.preco_promocional &&
+            Number(item.preco_promocional) < Number(item.preco)
+            ? item.preco_promocional
+            : item.preco
+        ),
+      })),
+      {
+        id: "shipping_cost", // ID único para o item de frete
+        title: `Frete - ${selectedShipping.name}`,
+        description: "Custo de envio do pedido",
+        quantity: 1,
+        unit_price: parseFloat(selectedShipping.price),
+      },
+    ];
+
     const nomeArray = cliente.nomeCompleto.trim().split(" ");
-    const nome = nomeArray[0];
-    const sobrenome = nomeArray.slice(1).join(" ");
     const payerInfoPayload = {
-      name: nome,
-      surname: sobrenome,
+      name: nomeArray[0],
+      surname: nomeArray.slice(1).join(" "),
       email: cliente.email,
     };
     const baseUrl = window.location.origin;
     const webhookUrl = import.meta.env.VITE_MERCADO_PAGO_WEBHOOK_URL;
+
     if (!webhookUrl || webhookUrl.includes("COLE_A_URL_DA_SUA_FUNCAO")) {
       console.error("ERRO CRÍTICO: URL de Webhook não configurada.");
       alert("Erro de configuração. Contate o suporte.");
       setLoadingPayment(false);
       return;
     }
+
     try {
       console.log("Enviando para createPaymentPreference:", {
-        items: itemsPayload,
+        items: itemsParaPagamento,
         payerInfo: payerInfoPayload,
         externalReference: orderId,
         backUrls: {
@@ -257,7 +364,7 @@ function CartPage() {
         notificationUrl: webhookUrl,
       });
       const result = await createPreferenceCallable({
-        items: itemsPayload,
+        items: itemsParaPagamento,
         payerInfo: payerInfoPayload,
         externalReference: orderId,
         backUrls: {
@@ -269,6 +376,7 @@ function CartPage() {
       });
       console.log("Resposta da Cloud Function:", result);
       if (result.data && result.data.init_point) {
+        clearCart(); // Limpa o carrinho ao ser redirecionado para o pagamento
         window.location.href = result.data.init_point;
       } else {
         console.error("Erro: init_point não encontrado.", result.data);
@@ -289,6 +397,7 @@ function CartPage() {
     }
   };
 
+  // Renderização condicional para carrinho vazio (do seu código original)
   if (cartItems.length === 0) {
     return (
       <div className="container mx-auto px-4 py-20 text-center bg-white shadow-lg rounded-lg mt-10 max-w-2xl">
@@ -326,6 +435,7 @@ function CartPage() {
         Seu Carrinho de Compras
       </h2>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Coluna Principal: Itens do Carrinho e Formulário de Cliente */}
         <div className="lg:col-span-2 bg-white p-6 rounded-lg shadow-md">
           <ul className="divide-y divide-gray-200">
             {cartItems.map((item) => {
@@ -335,12 +445,18 @@ function CartPage() {
                     .map((c) => c.trim())
                     .filter((c) => c !== "")
                 : [];
-              const itemObsErrorKey = `itemObservation-${item.id}`; // Chave para o erro deste item
+              const itemObsErrorKey = `itemObservation-${item.id}`;
+              const itemPrice =
+                item.preco_promocional &&
+                Number(item.preco_promocional) < Number(item.preco)
+                  ? item.preco_promocional
+                  : item.preco;
+
               return (
                 <li key={item.id} className="flex flex-col sm:flex-row py-6">
                   <div className="flex-shrink-0 w-32 h-32 sm:w-40 sm:h-40 relative rounded-md overflow-hidden">
                     <img
-                      src={item.imagem}
+                      src={item.imagem} // Use item.imagem, como no seu código original
                       alt={item.nome}
                       className="w-full h-full object-cover object-center"
                     />
@@ -361,15 +477,19 @@ function CartPage() {
                         item.preco_promocional < item.preco ? (
                           <div className="text-lg font-semibold flex items-baseline">
                             <span className="text-gray-500 line-through mr-2">
-                              R$ {Number(item.preco).toFixed(2)}
+                              R${" "}
+                              {Number(item.preco).toFixed(2).replace(".", ",")}
                             </span>
                             <span className="text-emerald-600">
-                              R$ {Number(item.preco_promocional).toFixed(2)}
+                              R${" "}
+                              {Number(item.preco_promocional)
+                                .toFixed(2)
+                                .replace(".", ",")}
                             </span>
                           </div>
                         ) : (
                           <p className="text-lg font-semibold text-gray-800">
-                            R$ {Number(item.preco).toFixed(2)}
+                            R$ {Number(item.preco).toFixed(2).replace(".", ",")}
                           </p>
                         )}
                       </div>
@@ -388,10 +508,10 @@ function CartPage() {
                       )}
                     </div>
 
-                    {/* ATUALIZAÇÃO: Campo de observação por item com exibição de erro */}
+                    {/* Campo de observação por item */}
                     <div className="mt-4">
                       <label
-                        htmlFor={itemObsErrorKey} // Usando a chave de erro como ID também
+                        htmlFor={itemObsErrorKey}
                         className="block text-sm font-medium text-gray-700 mb-1"
                       >
                         Personalização para "{item.nome}"*{" "}
@@ -401,11 +521,10 @@ function CartPage() {
                         :
                       </label>
                       <textarea
-                        id={itemObsErrorKey} // ID para foco e associação com label
+                        id={itemObsErrorKey}
                         value={item.itemObservation || ""}
-                        onChange={
-                          (e) =>
-                            handleItemObservationChange(item.id, e.target.value) // Usar o novo handler
+                        onChange={(e) =>
+                          handleItemObservationChange(item.id, e.target.value)
                         }
                         className={`mt-1 block w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-emerald-500 focus:border-emerald-500 sm:text-sm ${
                           formErrors[itemObsErrorKey]
@@ -440,6 +559,7 @@ function CartPage() {
                         </label>
                         <div className="flex items-center border border-gray-300 rounded-md shadow-sm">
                           <button
+                            type="button" // Adicionado type="button" para evitar submit de form
                             onClick={() =>
                               handleDecreaseQuantity(item.id, item.quantity)
                             }
@@ -462,6 +582,7 @@ function CartPage() {
                             }}
                           />
                           <button
+                            type="button" // Adicionado type="button" para evitar submit de form
                             onClick={() =>
                               handleIncreaseQuantity(item.id, item.quantity)
                             }
@@ -473,6 +594,7 @@ function CartPage() {
                       </div>
                       <div className="flex">
                         <button
+                          type="button" // Adicionado type="button" para evitar submit de form
                           onClick={() => handleRemoveItem(item.id)}
                           className="text-red-600 hover:text-red-800 transition duration-200 ease-in-out font-medium"
                         >
@@ -491,9 +613,9 @@ function CartPage() {
               onSubmit={handleCheckout}
               id="checkout-form"
               className="mt-8 pt-6 border-t border-gray-200"
-              noValidate // Desabilita validação HTML nativa para usar apenas a do JS
+              noValidate
             >
-              {/* Os campos de informações do cliente vêm aqui, como antes */}
+              {/* Campos de informações do cliente - RESTAURADOS DO SEU CÓDIGO ORIGINAL */}
               <h3 className="text-xl font-semibold text-gray-800 mb-6">
                 Informações para Contato e Entrega
               </h3>
@@ -616,7 +738,7 @@ function CartPage() {
                   type="text"
                   name="cep"
                   id="cep"
-                  value={cliente.cep}
+                  value={cliente.cep} // Este é o CEP do cliente, para o formulário
                   onChange={handleClienteChange}
                   maxLength="8"
                   className={`w-full p-2 border rounded-md shadow-sm ${
@@ -780,22 +902,109 @@ function CartPage() {
           )}
         </div>
 
+        {/* --- COLUNA DE RESUMO DO PEDIDO --- */}
         <div className="lg:col-span-1 bg-white p-6 rounded-lg shadow-md h-fit sticky top-24">
           <h3 className="text-2xl font-bold text-gray-900 mb-4">
             Resumo do Pedido
           </h3>
+
+          {/* Subtotal de Itens */}
           <div className="flex justify-between items-center text-gray-700 text-lg mb-2">
-            <span>Subtotal:</span>
+            <span>Subtotal de Itens:</span>
             <span>R$ {total.toFixed(2).replace(".", ",")}</span>
           </div>
+
+          {/* --- SEÇÃO DE CALCULAR FRETE --- */}
+          <div className="mt-6 pt-4 border-t">
+            <h4 className="text-lg font-semibold text-gray-800 mb-3">
+              Calcular Frete
+            </h4>
+            <div className="flex items-start gap-2">
+              <input
+                type="text"
+                placeholder="Seu CEP"
+                value={cep} // Este é o estado para o CEP do cálculo de frete
+                onChange={(e) => setCep(e.target.value)}
+                className="w-full p-2 border border-gray-300 rounded-md shadow-sm"
+                maxLength="8" // Limita a 8 dígitos, se for só números
+              />
+              <button
+                type="button" // Adicionado type="button" para evitar submit de form
+                onClick={handleCalculateShipping}
+                disabled={loadingShipping || cartItems.length === 0}
+                className="bg-gray-700 text-white px-5 py-2 rounded-md hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loadingShipping ? "..." : "OK"}
+              </button>
+            </div>
+            {shippingError && (
+              <p className="text-red-500 text-xs mt-2">{shippingError}</p>
+            )}
+
+            {/* Opções de Frete */}
+            {shippingOptions.length > 0 && (
+              <div className="mt-4 space-y-3">
+                {shippingOptions.map((option) => (
+                  <label
+                    key={option.id}
+                    className={`flex items-center p-3 border rounded-md cursor-pointer hover:bg-gray-50 ${
+                      selectedShipping?.id === option.id
+                        ? "border-emerald-600 ring-1 ring-emerald-600 bg-emerald-50"
+                        : "border-gray-300"
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="shipping"
+                      checked={selectedShipping?.id === option.id}
+                      onChange={() => setSelectedShipping(option)}
+                      className="h-4 w-4 text-emerald-600 border-gray-300 focus:ring-emerald-500"
+                    />
+                    <div className="ml-3 text-sm flex-grow">
+                      <p className="font-semibold text-gray-800">
+                        {option.name}
+                      </p>
+                      <p className="text-gray-600">
+                        Prazo: {option.delivery_time} dias
+                      </p>
+                    </div>
+                    <p className="font-bold text-gray-900">
+                      R$ {parseFloat(option.price).toFixed(2).replace(".", ",")}
+                    </p>
+                  </label>
+                ))}
+              </div>
+            )}
+            {formErrors.shipping && (
+              <p className="text-red-500 text-xs mt-2">{formErrors.shipping}</p>
+            )}
+          </div>
+
+          {/* Detalhes do Frete Selecionado (aparece apenas se um frete for selecionado) */}
+          {selectedShipping && (
+            <div className="flex justify-between items-center text-gray-700 text-lg mb-2 mt-4 border-t pt-4">
+              <span>Frete ({selectedShipping.name}):</span>
+              <span>
+                R${" "}
+                {parseFloat(selectedShipping.price)
+                  .toFixed(2)
+                  .replace(".", ",")}
+              </span>
+            </div>
+          )}
+
+          {/* Total Final */}
           <div className="flex justify-between items-center text-xl font-extrabold text-gray-900 border-t pt-4 mt-4">
             <span>Total:</span>
-            <span>R$ {total.toFixed(2).replace(".", ",")}</span>
+            <span>R$ {totalComFrete.toFixed(2).replace(".", ",")}</span>
           </div>
+
           <button
             type="submit"
             form="checkout-form"
-            disabled={loadingPayment || cartItems.length === 0}
+            disabled={
+              loadingPayment || cartItems.length === 0 || !selectedShipping
+            } // Desabilita se não houver frete selecionado
             className="w-full mt-6 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-6 rounded-md text-lg shadow-lg transform transition duration-300 ease-in-out hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loadingPayment
